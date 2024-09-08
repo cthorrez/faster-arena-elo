@@ -1,9 +1,8 @@
 
 import math
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
-
-
 
 def compute_mle_elo(
     df, SCALE=400, BASE=10, INIT_RATING=1000, sample_weight=None
