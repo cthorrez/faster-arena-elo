@@ -2,6 +2,7 @@ import math
 import tqdm
 import numpy as np
 from scipy.special import expit as sigmoid
+from scipy.optimize import minimize
 import pandas as pd
 import polars as pl
 
@@ -33,20 +34,35 @@ def preprocess_to_numpy(df):
     return matchups, weights, model_to_idx
 
 
-def bt_loss_and_grad(ratings, matchups, weights, alpha):
+def bt_loss_and_grad(ratings, matchups, weights, alpha=1.0):
     matchup_ratings = ratings[matchups[:,[0,1]]]
-    # this maps 0 -> 0.0, 1 -> 0.5, 2 -> 1.0 
+    # this maps 0 -> 1.0, 1 -> 0.5, 2 -> 1.0 
     outcomes = matchups[:,2].astype(np.float32) / 2.0
     probs = sigmoid(alpha * (matchup_ratings[:,0] - matchup_ratings[:,1]))
+    print(f'{probs=}')
+    loss = (((np.log(probs) * outcomes) + (np.log(1.0 - probs) * (1.0 - outcomes))) * weights).sum()
+    matchups_grads = (outcomes - probs) * weights
+    model_grad = np.zeros_like(ratings)
+    np.add.at(model_grad, matchups[:, 1], matchups_grads)
+    np.add.at(model_grad, matchups[:, 0], -matchups_grads)
+    return loss, model_grad
 
-
-
+ 
+    
 def compute_mle_elo(
     df, SCALE=400, BASE=10, INIT_RATING=1000, sample_weight=None
 ):
     matchups, weights, model_to_idx = preprocess_to_numpy(df)
     alpha = math.log(BASE) / SCALE
 
+    initial_ratings = np.zeros(len(model_to_idx))
+    ratings = minimize(
+        fun=bt_loss_and_grad,
+        x0=initial_ratings,
+        args=(matchups, weights),
+        jac=True,
+    )
+    print(ratings)
 
 
 def get_bootstrap_result(battles, func_compute_elo, num_round):
