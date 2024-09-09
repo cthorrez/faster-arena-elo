@@ -78,9 +78,6 @@ def fit_bt(matchups, outcomes, weights, n_models, alpha):
     )
     loss = result['fun']
     ratings = result['x']
-    # scaled_ratings = (ratings['x'] * SCALE) + INIT_RATING
-    # if "mixtral-8x7b-instruct-v0.1" in models:
-    #     scaled_ratings += 1114 - scaled_ratings[models.tolist().index("mixtral-8x7b-instruct-v0.1")]
     return ratings, loss
 
 
@@ -92,9 +89,12 @@ def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING
         pvals=weights,
         size=(num_round)
     )
-    boot_matchups = matchups[idxs]
-    boot_outcomes = outcomes[idxs]
-    boot_weights = weights[idxs]
+    print(idxs.shape)
+    boot_matchups = np.tile(matchups[None,:], (num_round,1,1))
+    boot_outcomes = np.tile(outcomes[None,:], (num_round,1))
+    boot_weights = idxs.astype(np.float32) / len(battles)
+    print(boot_matchups.shape)
+    print(boot_outcomes.shape)
 
     n_models = len(models)
     alpha = np.log(BASE)
@@ -104,15 +104,17 @@ def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING
     with mp.Pool(8) as pool:
         results = pool.map(fit_bt_wrapper, args_list)
 
-    print(results)
 
     ratings = np.stack([result[0] for result in results])
     losses = np.array([result[1] for result in results])
 
-    ratings = np.mean(ratings, axis=0)
-    sort_idxs = np.argsort(-ratings)
+    ratings = np.median(ratings, axis=0)
+    scaled_ratings = (ratings * SCALE) + INIT_RATING
+    if "mixtral-8x7b-instruct-v0.1" in models:
+        scaled_ratings += 1114 - scaled_ratings[models.tolist().index("mixtral-8x7b-instruct-v0.1")]
+    sort_idxs = np.argsort(-scaled_ratings)
     for place_idx, sort_idx in enumerate(sort_idxs):
-        print(models[sort_idx], ratings[sort_idx])
+        print(models[sort_idx], scaled_ratings[sort_idx])
 
     return ratings, losses
 
