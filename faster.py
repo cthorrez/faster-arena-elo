@@ -8,6 +8,7 @@ import multiprocessing as mp
 import pandas as pd
 import polars as pl
 
+
 def preprocess_to_numpy(df):
     models = pd.unique(df[['model_a', 'model_b']].values.ravel())
     N, C = len(df), len(df)
@@ -30,8 +31,8 @@ def preprocess_to_numpy(df):
     matchups_outcomes, weights = np.unique(schedule, return_counts=True, axis=0)
     matchups = matchups_outcomes[:,[0,1]]
     # maps 2.0 -> 1.0, 1 -> 0.5, 0 -> 0.0 which will be used during optimization
-    outcomes = matchups_outcomes[:,2].astype(np.float32) / 2.0
-    weights = weights.astype(np.float32)
+    outcomes = matchups_outcomes[:,2].astype(np.float64) / 2.0
+    weights = weights.astype(np.float64)
     # normalize the weights
     weights = weights / weights.sum()
     return matchups, outcomes, weights, models
@@ -40,48 +41,54 @@ def preprocess_to_numpy(df):
 def bt_loss_and_grad(ratings, matchups, outcomes, weights, alpha=1.0):
     matchup_ratings = ratings[matchups]
     logits = alpha * (matchup_ratings[:,0] - matchup_ratings[:,1])
+    probs = expit(logits)
     
-    probs = expit(logits)  # Still needed for gradient calculation
     # Numerically stable log probability calculation
+    # based on grad check it's BAD though!!!
     # log_probs = log_expit(logits)
     # log_1_minus_probs = log_expit(-logits)  # log(1-sigmoid(x)) = log_expit(-x)
     # loss = -((log_probs * outcomes + log_1_minus_probs * (1.0 - outcomes)) * weights).sum()
-    loss = -((np.log(probs) * outcomes + np.log(1.0 - probs) * (1.0 - outcomes)) * weights).sum()
-    matchups_grads = -alpha * (outcomes - probs) * weights
 
+    loss = -((np.log(probs) * outcomes + np.log(1.0 - probs) * (1.0 - outcomes)) * weights).sum()
+    
+    matchups_grads = -alpha * (outcomes - probs) * weights
     model_grad = np.zeros_like(ratings)
-    # np.add.at(model_grad, matchups[:, 0], matchups_grads)
-    # np.add.at(model_grad, matchups[:, 1], -matchups_grads)
-    np.add.at(model_grad, matchups[:, [0, 1]], matchups_grads[:, None] * np.array([1, -1]))
+    np.add.at(model_grad, matchups[:, [0, 1]], matchups_grads[:, None] * np.array([1.0, -1.0], dtype=np.float64))
     return loss, model_grad
 
  
     
-def compute_mle_elo(df, SCALE=400, BASE=10, INIT_RATING=1000):
+def compute_mle_elo(df, SCALE=400, BASE=10, INIT_RATING=1000, tol=1e-6):
     matchups, outcomes, weights, models = preprocess_to_numpy(df)
-    return fit_bt(matchups, outcomes, weights, models, BASE, SCALE, INIT_RATING)
+    ratings, loss = fit_bt(matchups, outcomes, weights, len(models), np.log(BASE), tol)
+    scaled_ratings = (ratings * SCALE) + INIT_RATING
+    if "mixtral-8x7b-instruct-v0.1" in models:
+        scaled_ratings += 1114 - scaled_ratings[models.tolist().index("mixtral-8x7b-instruct-v0.1")]
+    return pd.Series(scaled_ratings, index=models).sort_values(ascending=False)
 
 
 def fit_bt_wrapper(args):
     return fit_bt(*args)
 
-def fit_bt(matchups, outcomes, weights, n_models, alpha):
-    initial_ratings = np.zeros(n_models)
+def fit_bt(matchups, outcomes, weights, n_models, alpha, tol=1e-6):
+    initial_ratings = np.zeros(n_models, dtype=np.float64)
     result = minimize(
         fun=bt_loss_and_grad,
         x0=initial_ratings,
         args=(matchups, outcomes, weights, alpha),
         jac=True,
-        # method='SLSQP',
+        # method='BFGS',
         method='L-BFGS-B',
-        options={'disp' : False},
+        # method='SLSQP',
+        options={'disp' : False, 'maxiter': 100, 'gtol':tol},
     )
     loss = result['fun']
+    # print(f'loss: {loss}')
     ratings = result['x']
     return ratings, loss
 
 
-def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING=100.0):
+def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING=1000.0):
     matchups, outcomes, weights, models = preprocess_to_numpy(battles)
     rng = np.random.default_rng(seed=0)
     idxs = rng.multinomial(
@@ -104,20 +111,21 @@ def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING
     with mp.Pool(8) as pool:
         results = pool.map(fit_bt_wrapper, args_list)
 
+    ratings = np.empty((num_round, n_models))
+    losses = np.empty(num_round)
+    for idx, result in enumerate(results):
+        ratings[idx,:] = result[0] 
+        losses[idx] = result[1]
 
-    ratings = np.stack([result[0] for result in results])
-    losses = np.array([result[1] for result in results])
-
-    ratings = np.median(ratings, axis=0)
     scaled_ratings = (ratings * SCALE) + INIT_RATING
     if "mixtral-8x7b-instruct-v0.1" in models:
-        scaled_ratings += 1114 - scaled_ratings[models.tolist().index("mixtral-8x7b-instruct-v0.1")]
-    sort_idxs = np.argsort(-scaled_ratings)
-    for place_idx, sort_idx in enumerate(sort_idxs):
-        print(models[sort_idx], scaled_ratings[sort_idx])
+        baseline_idx = models.tolist().index("mixtral-8x7b-instruct-v0.1")
+        scaled_ratings = scaled_ratings + (1114 - scaled_ratings[:,baseline_idx][:,None])
 
-    return ratings, losses
+    df = pd.DataFrame(scaled_ratings, columns=models)
+    print(df.columns)
 
+    return df[df.median().sort_values(ascending=False).index]
 
 
 def main():
@@ -126,12 +134,13 @@ def main():
  
     # start_time = time.time()
     # compute_mle_elo(df)
+    # duration = time.time() - start_time
+    # print(f'mle duration (s): {duration}')
 
     start_time = time.time()
-    # matchups, outcomes, weights, models = preprocess_to_numpy(df)
-    ratings, losses = get_bootstrap_result(df, num_round=100)
+    ratings, losses = get_bootstrap_result(df, num_round=10000)
     duration = time.time() - start_time
-    print(f'duration (s): {duration}')
+    print(f'bootstrap duration (s): {duration}')
     print(ratings.shape)
     print(losses.mean())
 
