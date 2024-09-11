@@ -30,6 +30,7 @@ def bench_function(refresh, function, **kwargs):
         og_function = partial(og_bootstrap, func_compute_elo=og_mle)
         fast_function = fast_bootstrap
 
+    os.makedirs('ratings', exist_ok=True)
     og_ratings_path = f'ratings/orignal_{function}_ratings.npz'
     if (not os.path.exists(og_ratings_path)) or refresh:
         start_time = time.time()

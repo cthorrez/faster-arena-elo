@@ -164,3 +164,4 @@ cython_debug/
 # lol
 local_file_name.json
 data.parquet
+*.npz
