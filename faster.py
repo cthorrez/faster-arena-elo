@@ -66,12 +66,12 @@ def fit_bt(matchups, outcomes, weights, n_models, alpha, tol=1e-6):
         jac=True,
         method='L-BFGS-B',
         # method='SLSQP',
-        options={'disp' : False, 'maxiter': 100, 'gtol':tol},
+        options={'disp' : False, 'maxiter': 100, 'gtol': tol},
     )
     return result["x"]
 
 
-def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING=1000.0):
+def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING=1000.0, tol=1e-6):
     matchups, outcomes, weights, models = preprocess_to_numpy(battles)
     # bootstrap sample the unique outcomes and their counts directly using the multinomial distribution
     rng = np.random.default_rng(seed=0)
@@ -84,7 +84,7 @@ def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING
     boot_weights = idxs.astype(np.float64) / len(battles)
 
     # the only thing different across samples is the distribution of weights
-    bt_fn = partial(fit_bt, matchups, outcomes, n_models=len(models), alpha=np.log(BASE))
+    bt_fn = partial(fit_bt, matchups, outcomes, n_models=len(models), alpha=np.log(BASE), tol=tol)
 
     with mp.Pool(os.cpu_count()) as pool:
         results = pool.map(bt_fn, boot_weights)
