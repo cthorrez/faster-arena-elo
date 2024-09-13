@@ -6,6 +6,7 @@ The main code is in `faster.py` which contains faster implementations of the fun
 ## How it works
 The high level overview is:
 * Avoid using for loops over pandas df, use numpy vectorization instead
+* Avoid recomputation of any processing steps or calculation of constants
 * Exploit data duplication: Don't operate on the full `N` (1.6M) rows of the dataset, the likelihood can be computed using only the unique observed outcomes (22k) weighted by their occurance counts
 * Exploit sparsity: the original uses logistic regression where input rows are vectors of dimension `M` (number of models) but all but 2 indices are 0. This version only stores and uses the indices of the current models
 * Exploit symmetry: the gradient with respect to one model is the negative of the gradient with respect to the other, so you only need to compute one
