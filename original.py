@@ -5,9 +5,10 @@ import numpy as np
 import pandas as pd
 
 def compute_mle_elo(
-    df, SCALE=400, BASE=10, INIT_RATING=1000, sample_weight=None
+    df, SCALE=400, BASE=10, INIT_RATING=1000, sample_weight=None, tol=1e-4
 ):
     from sklearn.linear_model import LogisticRegression
+
     ptbl_a_win = pd.pivot_table(
         df[df["winner"] == "model_a"],
         index="model_a",
@@ -15,19 +16,14 @@ def compute_mle_elo(
         aggfunc="size",
         fill_value=0,
     )
-    # if no tie, create a zero matrix
-    if sum(df["winner"].isin(["tie", "tie (bothbad)"])) == 0:
-        ptbl_tie = pd.DataFrame(0, index=ptbl_a_win.index, columns=ptbl_a_win.columns)
-    else:
-        ptbl_tie = pd.pivot_table(
-            df[df["winner"].isin(["tie", "tie (bothbad)"])],
-            index="model_a",
-            columns="model_b",
-            aggfunc="size",
-            fill_value=0,
-        )
-        ptbl_tie = ptbl_tie + ptbl_tie.T
-
+    ptbl_tie = pd.pivot_table(
+        df[df["winner"].isin(["tie", "tie (bothbad)"])],
+        index="model_a",
+        columns="model_b",
+        aggfunc="size",
+        fill_value=0,
+    )
+    ptbl_tie = ptbl_tie + ptbl_tie.T
     ptbl_b_win = pd.pivot_table(
         df[df["winner"] == "model_b"],
         index="model_a",
@@ -65,7 +61,7 @@ def compute_mle_elo(
     X = X[:cur_row]
     Y = Y[:cur_row]
 
-    lr = LogisticRegression(fit_intercept=False, penalty=None, tol=1e-6)
+    lr = LogisticRegression(fit_intercept=False, penalty=None, tol=tol, max_iter=100)
     lr.fit(X, Y, sample_weight=sample_weights)
     elo_scores = SCALE * lr.coef_[0] + INIT_RATING
     if "mixtral-8x7b-instruct-v0.1" in models.index:

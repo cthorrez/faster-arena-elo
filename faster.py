@@ -8,7 +8,7 @@ import pandas as pd
 
 
 def preprocess_to_numpy(df):
-    models = pd.unique(df[['model_a', 'model_b']].values.ravel()).tolist()
+    models = np.unique(df[['model_a', 'model_b']].values)
     model_to_idx = {model:idx for idx,model in enumerate(models)}
     # the 3 columns of schedule represent: model_a id, model_b id, outcome_id
     schedule = np.empty((len(df), 3), dtype=np.int32)
@@ -28,7 +28,6 @@ def preprocess_to_numpy(df):
     outcomes = matchups_outcomes[:,2].astype(np.float64) / 2.0
     weights = weights.astype(np.float64)
     # each possible result is weighted according to number of times it occured in the dataset
-    weights = weights / weights.sum()
     return matchups, outcomes, weights, models
 
 
@@ -46,7 +45,7 @@ def bt_loss_and_grad(ratings, matchups, outcomes, weights, alpha=1.0):
 
 def scale_and_offset(ratings, models, scale=400, init_rating=1000, baseline_model="mixtral-8x7b-instruct-v0.1", baseline_rating=1114):
     scaled_ratings = (ratings * scale) + init_rating
-    baseline_idx = models.index(baseline_model)
+    baseline_idx = np.searchsorted(models, baseline_model)
     scaled_ratings += (baseline_rating - scaled_ratings[..., [baseline_idx]])
     return scaled_ratings
     
@@ -77,7 +76,7 @@ def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING
     rng = np.random.default_rng(seed=0)
     idxs = rng.multinomial(
         n=len(battles),
-        pvals=weights,
+        pvals=weights / weights.sum(),
         size=(num_round)
     )
     # only the distribution over their occurance counts changes between samples (and it can be 0)

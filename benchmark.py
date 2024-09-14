@@ -13,10 +13,10 @@ from faster import get_bootstrap_result as fast_bootstrap, compute_mle_elo as fa
 def load_data(use_polars=False, N=2_000_000_000):
     if not use_polars:
         # pandas is slower but I want to make sure it works exactly like chatbot arena notebook
-        df = pd.read_json('local_file_name.json').sort_values(ascending=True, by=["tstamp"])
+        df = pd.read_json('clean_battle_20240826_public.json').sort_values(ascending=True, by=["tstamp"])
         df = df[df["anony"] == True]
-        df = df[df["dedup_tag"].apply(lambda x: x.get("sampled", False))]
-        df = df.tail(N)
+        # df = df[df["dedup_tag"].apply(lambda x: x.get("sampled", False))]
+        df = df.head(N)
         df = df.reset_index(drop=True)
         # weird as hell but it makes the MLE stuff faster downstream...
         buffer = io.BytesIO()
@@ -24,9 +24,10 @@ def load_data(use_polars=False, N=2_000_000_000):
         df = pd.read_parquet(buffer)
     else:
         # use polars for a quick inner loop
-        df = pl.read_json('local_file_name.json').filter(
-           pl.col("anony") & (pl.col("dedup_tag").struct.field("sampled").fill_null(False))
-        ).sort("tstamp").select("model_a", "model_b", "winner").tail(N).to_pandas()
+        df = pl.read_json('clean_battle_20240826_public.json').lazy().filter(pl.col("anony"))
+        df = df.filter(pl.col("dedup_tag").struct.field("sampled").fill_null(False))
+        df = df.sort("tstamp").head(N)
+        df = df.collect().to_pandas()
     print(f"num matches: {len(df)}")
     return df
 
@@ -61,6 +62,8 @@ def bench_function(df, refresh, function, **kwargs):
         og_ratings_comp = og_ratings_comp.mean(axis=0)
         fast_ratings_comp = fast_ratings_comp.mean(axis=0)
         compare_bootstrap_distributions(og_ratings, fast_ratings, 4)
+    else:
+        print(fast_ratings)
 
     diff = np.abs(og_ratings_comp - fast_ratings_comp).mean()
     print(f'mean diff: {diff}')
@@ -95,9 +98,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', '--refresh', action='store_true')
     parser.add_argument('--use_polars', action='store_true')
-    parser.add_argument('-n', '--num_rows', type=int)
+    parser.add_argument('-n', '--num_rows', type=int, default=2_000_000)
     parser.add_argument('-s', '--num_samples', type=int, default=100)
     args = parser.parse_args()
     df = load_data(use_polars=args.use_polars, N=args.num_rows)
     bench_function(df, refresh=args.refresh, function='mle')
-    bench_function(df, refresh=args.refresh, function='bootstrap', num_round=args.num_samples)
+    # bench_function(df, refresh=args.refresh, function='bootstrap', num_round=args.num_samples)
