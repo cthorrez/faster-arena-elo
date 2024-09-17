@@ -4,7 +4,7 @@ from scipy.special import expit
 from scipy.optimize import minimize
 import pandas  as pd
 from original_style import STYLE_CONTROL_ELEMENTS_V1
-from faster import bt_loss_and_grad
+from faster import bt_loss_and_grad, scale_and_offset
 
 
 
@@ -30,8 +30,6 @@ def contextual_bt_loss_and_grad(
     loss = -((np.log(probs) * outcomes + np.log(1.0 - probs) * (1.0 - outcomes)) * weights).sum()
     reg_loss = 0.5 * reg * np.inner(feature_params, feature_params)
     loss += reg_loss
-    print(loss)
-
     error = (outcomes - probs) * weights
     grad = np.zeros_like(params)
     
@@ -44,23 +42,40 @@ def contextual_bt_loss_and_grad(
 
 
 
-def fit_contextual_bt(matchups, features, outcomes, weights, n_competitors, alpha, reg, tol=1e-6):
+def fit_contextual_bt(
+        matchups,
+        features,
+        outcomes,
+        weights,
+        models,
+        alpha,
+        reg,
+        init_rating,
+        scale=400.0, 
+        tol=1e-6
+    ):
     n_features = features.shape[1]
-    initial_params = np.zeros(n_competitors + n_features, dtype=np.float64)
+    n_models = len(models)
+    initial_params = np.zeros(n_models + n_features, dtype=np.float64)
     
     result = minimize(
         fun=contextual_bt_loss_and_grad,
         x0=initial_params,
-        args=(n_competitors, matchups, features, outcomes, weights, alpha, reg),
+        args=(n_models, matchups, features, outcomes, weights, alpha, reg),
         jac=True,
         method='L-BFGS-B',
         options={'disp': False, 'maxiter': 100, 'gtol': tol},
     )
     
-    fitted_ratings = result["x"][:n_competitors]
-    fitted_feature_params = result["x"][n_competitors:]
-    
-    return fitted_ratings, fitted_feature_params
+    ratings = result["x"][:n_models]
+    feature_params = result["x"][n_models:]
+    scaled_ratings = scale_and_offset(
+        ratings,
+        models=models,
+        scale=scale,
+        init_rating=init_rating,
+    )
+    return scaled_ratings, feature_params
 
 def construct_style_matrices(
     df,
@@ -73,7 +88,6 @@ def construct_style_matrices(
 
     # set two model cols by mapping the model names to their int ids
     matchups = df[['model_a', 'model_b']].map(lambda x: model_to_idx[x]).values
-    
 
     n = matchups.shape[0]
     k = int(len(style_elements) / 2)

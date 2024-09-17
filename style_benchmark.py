@@ -6,7 +6,7 @@ from original_style import construct_style_matrices, fit_mle_elo
 from faster_style import construct_style_matrices as construct_style_matrices_fast, fit_contextual_bt
 
 def main():
-    N = 2000000
+    N = 20000
     # df = load_data(use_polars=True, N=N)
     df = pl.scan_parquet("processed_data.parquet", n_rows=N).collect().to_pandas()
     # print(df.head(1)['conv_metadata'].to_dict())
@@ -22,11 +22,15 @@ def main():
         features,
         outcomes,
         weights=np.ones_like(outcomes),
-        n_competitors=len(models),
+        models=models,
         alpha=math.log(10.0),
         reg=1.0,
+        init_rating=1000.0,
+        scale=400.0,
     )
-    print(ratings)
+    for rank_idx in np.argsort(-ratings):
+        print(models[rank_idx], ratings[rank_idx])
+    
     print(feature_params)
 
 
