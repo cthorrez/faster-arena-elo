@@ -4,9 +4,20 @@ from scipy.special import expit
 from scipy.optimize import minimize
 import pandas  as pd
 from original_style import STYLE_CONTROL_ELEMENTS_V1
+from faster import bt_loss_and_grad
 
 
-def contextual_bt_loss_and_grad(params, n_competitors, matchups, features, outcomes, weights, alpha=1.0):
+
+def contextual_bt_loss_and_grad(
+        params,
+        n_competitors,
+        matchups,
+        features,
+        outcomes,
+        weights,
+        alpha=1.0,
+        reg=1.0,
+    ):
     # Split params into ratings and feature parameters
     ratings = params[:n_competitors]
     feature_params = params[n_competitors:]
@@ -17,26 +28,30 @@ def contextual_bt_loss_and_grad(params, n_competitors, matchups, features, outco
     probs = expit(bt_logits + context_logits)
     
     loss = -((np.log(probs) * outcomes + np.log(1.0 - probs) * (1.0 - outcomes)) * weights).sum()
+    reg_loss = 0.5 * reg * np.inner(feature_params, feature_params)
+    loss += reg_loss
+    print(loss)
+
     error = (outcomes - probs) * weights
     grad = np.zeros_like(params)
     
     matchups_grads = -alpha * error
     np.add.at(grad[:n_competitors], matchups[:, [0, 1]], matchups_grads[:, None] * np.array([1.0, -1.0], dtype=np.float64))
     
-    grad[n_competitors:] = np.dot(features.T, error)
+    grad[n_competitors:] = -np.dot(features.T, error) + reg * feature_params
     
     return loss, grad
 
 
 
-def fit_contextual_bt(matchups, features, outcomes, weights, n_competitors, alpha, tol=1e-6):
+def fit_contextual_bt(matchups, features, outcomes, weights, n_competitors, alpha, reg, tol=1e-6):
     n_features = features.shape[1]
     initial_params = np.zeros(n_competitors + n_features, dtype=np.float64)
     
     result = minimize(
         fun=contextual_bt_loss_and_grad,
         x0=initial_params,
-        args=(n_competitors, matchups, features, outcomes, weights, alpha),
+        args=(n_competitors, matchups, features, outcomes, weights, alpha, reg),
         jac=True,
         method='L-BFGS-B',
         options={'disp': False, 'maxiter': 100, 'gtol': tol},
@@ -49,7 +64,6 @@ def fit_contextual_bt(matchups, features, outcomes, weights, n_competitors, alph
 
 def construct_style_matrices(
     df,
-    BASE=10,
     apply_ratio=[1, 1, 1, 1],
     style_elements=STYLE_CONTROL_ELEMENTS_V1,
     add_one=True,
@@ -60,21 +74,10 @@ def construct_style_matrices(
     # set two model cols by mapping the model names to their int ids
     matchups = df[['model_a', 'model_b']].map(lambda x: model_to_idx[x]).values
     
-    # model_a win -> 1.0, tie -> 0.5, model_b win -> 0.0
-    labels = np.select(
-        condlist=[df['winner'] == 'model_a', df['winner'] == 'model_b'],
-        choicelist=[1.0, 0.0],
-        default=0.5
-    )
-
 
     n = matchups.shape[0]
     k = int(len(style_elements) / 2)
 
-
-
-    X2 = np.zeros(shape=(n, 2*k))
-    
     style_vector = np.array(
         [
             df.conv_metadata.map(
@@ -101,4 +104,11 @@ def construct_style_matrices(
     style_mean = np.mean(style_diff, axis=1)
     style_std = np.std(style_diff, axis=1)
 
-    X[:, -k:] = ((style_diff - style_mean[:, np.newaxis]) / style_std[:, np.newaxis]).T
+
+    outcomes = np.full(shape=(n,), fill_value=0.5)
+    outcomes[df["winner"] == "model_a"] = 1.0
+    outcomes[df["winner"] == "model_b"] = 0.0
+
+    features = ((style_diff - style_mean[:, np.newaxis]) / style_std[:, np.newaxis]).T
+
+    return matchups, features, outcomes, models

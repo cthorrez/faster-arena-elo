@@ -1,4 +1,5 @@
 import math
+from tqdm import tqdm
 import pandas as pd
 import numpy as np
 
@@ -75,3 +76,62 @@ def construct_style_matrices(
     Y[tie_idx] = 1.0
 
     return X, Y, models
+
+
+def fit_mle_elo(X, Y, models, indices=None, SCALE=400, INIT_RATING=1000):
+    from sklearn.linear_model import LogisticRegression
+
+    p = len(models.index)
+
+    lr = LogisticRegression(fit_intercept=False)
+    if indices:
+        lr.fit(X[indices], Y[indices])
+    else:
+        lr.fit(X, Y)
+
+    elo_scores = SCALE * lr.coef_[0] + INIT_RATING
+    # calibrate llama-13b to 800 if applicable
+    if "mixtral-8x7b-instruct-v0.1" in models.index:
+        elo_scores += 1114 - elo_scores[models["mixtral-8x7b-instruct-v0.1"]]
+    return (
+        pd.Series(elo_scores[:p], index=models.index).sort_values(ascending=False),
+        lr.coef_[0][p:],
+    )
+
+def get_bootstrap_result_style_control(
+    X, Y, battles, models, func_compute_elo, num_round=1000
+):
+    elos = []
+    coefs = []
+    assert X.shape[0] % 2 == 0 and X.shape[0] == Y.shape[0]
+    k = int(
+        X.shape[0] / 2
+    )  # Since we duplicate the battles when constructing X and Y, we don't want to sample the duplicates
+
+    battles_tie_idx = (battles["winner"] == "tie") | (
+        battles["winner"] == "tie (bothbad)"
+    )
+    for _ in tqdm(range(num_round), desc="bootstrap"):
+        indices = np.random.choice(list(range(k)), size=(k), replace=True)
+
+        index2tie = np.zeros(k, dtype=bool)
+        index2tie[battles_tie_idx] = True
+
+        nontie_indices = indices[~index2tie[indices]]
+        tie_indices = np.concatenate(
+            [indices[index2tie[indices]], indices[index2tie[indices]] + k]
+        )
+
+        _X = np.concatenate([X[nontie_indices], X[nontie_indices], X[tie_indices]])
+        _Y = np.concatenate([Y[nontie_indices], Y[nontie_indices], Y[tie_indices]])
+
+        assert _X.shape == X.shape and _Y.shape == Y.shape
+
+        states = ~_X[:, : len(models)].any(axis=0)
+
+        elo, coef = func_compute_elo(_X, _Y, models=models[~states])
+        elos.append(elo)
+        coefs.append(coef)
+
+    df = pd.DataFrame(elos)
+    return df[df.median().sort_values(ascending=False).index], coefs
