@@ -1,52 +1,58 @@
+import os
+import pickle
 import time
 import math
 import numpy as np
 import polars as pl
 from benchmark import load_data
 from original_style import construct_style_matrices, fit_mle_elo
-from faster_style import construct_style_matrices as construct_style_matrices_fast, fit_contextual_bt
+from faster_style import construct_style_matrices as construct_style_matrices_fast, fit_contextual_bt, get_bootstrap_result_style_control
 
 def main():
     N = 2_000_000
     # df = load_data(use_polars=True, N=N)
     df = pl.scan_parquet("processed_data.parquet").tail(N).collect().to_pandas()
-    # print(df.head(1)['conv_metadata'].to_dict())
+
+    # if os.path.exists(f'style_cache.pkl'):
+    #     print('loading original results from cache')
+    #     X, y, models, original_ratings, original_params = pickle.load(open('style_cache.pkl', 'rb'))
+    # else:
+    #     start_time = time.time()
+    #     X, y, models = construct_style_matrices(df)
+    #     mid_time = time.time()
+    #     original_ratings, original_params = fit_mle_elo(X, y, models)
+    #     end_time = time.time()
+    #     pickle.dump((X, y, models, original_ratings, original_params), open('style_cache.pkl', 'wb'))
+    #     print(original_ratings)
+    #     print(original_params)
+    #     print(f'original preprocess: {mid_time - start_time}')
+    #     print(f'original fit: {end_time - start_time}')
 
     # start_time = time.time()
-    # X, y, models = construct_style_matrices(df)
+    # matchups, features, outcomes, models = construct_style_matrices_fast(df)
     # mid_time = time.time()
-    # original_ratings, original_params = fit_mle_elo(X, y, models)
+    # ratings, params = fit_contextual_bt(
+    #     matchups,
+    #     features,
+    #     outcomes,
+    #     models=models,
+    #     alpha=math.log(10.0),
+    #     reg=0.5,
+    #     regularize_ratings=True,
+    #     init_rating=1000.0,
+    #     scale=400.0,
+    #     tol=1e-6,
+    # )
     # end_time = time.time()
-    # print(original_ratings)
-    # print(original_params)
-    # print(f'original preprocess: {mid_time - start_time}')
-    # print(f'original fit: {end_time - start_time}')
-
-    start_time = time.time()
-    matchups, features, outcomes, models = construct_style_matrices_fast(df)
-    mid_time = time.time()
-    ratings, params = fit_contextual_bt(
-        matchups,
-        features,
-        outcomes,
-        models=models,
-        alpha=math.log(10.0),
-        reg=0.5,
-        regularize_ratings=True,
-        init_rating=1000.0,
-        scale=400.0,
-        tol=1e-6,
-    )
-    end_time = time.time()
-    print(ratings)
-    print(params)
-    print(f'faster preprocess: {mid_time - start_time}')
-    print(f'faster fit: {end_time - start_time}')
+    # print(ratings)
+    # print(params)
+    # print(f'faster preprocess: {mid_time - start_time}')
+    # print(f'faster fit: {end_time - start_time}')
 
     # print(f'ratings mean abs diff: {np.mean(np.abs(original_ratings.values - ratings))}')
     # print(f'params mean abs diff: {np.mean(np.abs(original_params - params))}')
 
-
+    get_bootstrap_result_style_control(df, 100)
 
 
 
