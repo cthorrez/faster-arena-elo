@@ -83,7 +83,7 @@ def fit_mle_elo(X, Y, models, indices=None, SCALE=400, INIT_RATING=1000):
 
     p = len(models.index)
 
-    lr = LogisticRegression(fit_intercept=False)
+    lr = LogisticRegression(fit_intercept=False, tol=1e-6)
     if indices:
         lr.fit(X[indices], Y[indices])
     else:

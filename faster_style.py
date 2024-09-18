@@ -14,9 +14,9 @@ def contextual_bt_loss_and_grad(
         matchups,
         features,
         outcomes,
-        weights,
         alpha=1.0,
         reg=1.0,
+        regularize_ratings=False,
     ):
     # Split params into ratings and feature parameters
     ratings = params[:n_competitors]
@@ -27,55 +27,21 @@ def contextual_bt_loss_and_grad(
     context_logits = np.dot(features, feature_params)
     probs = expit(bt_logits + context_logits)
     
-    loss = -((np.log(probs) * outcomes + np.log(1.0 - probs) * (1.0 - outcomes)) * weights).sum()
+    loss = -((np.log(probs) * outcomes + np.log(1.0 - probs) * (1.0 - outcomes))).sum()
     reg_loss = 0.5 * reg * np.inner(feature_params, feature_params)
+    reg_loss += regularize_ratings * 0.5 * reg * np.inner(ratings, ratings)
+
     loss += reg_loss
-    error = (outcomes - probs) * weights
+    error = (outcomes - probs)
     grad = np.zeros_like(params)
     
     matchups_grads = -alpha * error
     np.add.at(grad[:n_competitors], matchups[:, [0, 1]], matchups_grads[:, None] * np.array([1.0, -1.0], dtype=np.float64))
     
-    grad[n_competitors:] = -np.dot(features.T, error) + reg * feature_params
-    
+    grad[n_competitors:] = -np.dot(features.T, error) + (reg * feature_params)
+    grad[:n_competitors] += regularize_ratings * reg * ratings
+
     return loss, grad
-
-
-
-def fit_contextual_bt(
-        matchups,
-        features,
-        outcomes,
-        weights,
-        models,
-        alpha,
-        reg,
-        init_rating,
-        scale=400.0, 
-        tol=1e-6
-    ):
-    n_features = features.shape[1]
-    n_models = len(models)
-    initial_params = np.zeros(n_models + n_features, dtype=np.float64)
-    
-    result = minimize(
-        fun=contextual_bt_loss_and_grad,
-        x0=initial_params,
-        args=(n_models, matchups, features, outcomes, weights, alpha, reg),
-        jac=True,
-        method='L-BFGS-B',
-        options={'disp': False, 'maxiter': 100, 'gtol': tol},
-    )
-    
-    ratings = result["x"][:n_models]
-    feature_params = result["x"][n_models:]
-    scaled_ratings = scale_and_offset(
-        ratings,
-        models=models,
-        scale=scale,
-        init_rating=init_rating,
-    )
-    return scaled_ratings, feature_params
 
 def construct_style_matrices(
     df,
@@ -92,6 +58,7 @@ def construct_style_matrices(
     n = matchups.shape[0]
     k = int(len(style_elements) / 2)
 
+    # features = np.empty(shape=(n,k))
     style_vector = np.array(
         [
             df.conv_metadata.map(
@@ -102,6 +69,7 @@ def construct_style_matrices(
             for element in style_elements
         ]
     )
+    print(style_vector.shape)
 
     style_diff = (style_vector[:k] - style_vector[k:]).astype(float)
     style_sum = (style_vector[:k] + style_vector[k:]).astype(float)
@@ -124,5 +92,82 @@ def construct_style_matrices(
     outcomes[df["winner"] == "model_b"] = 0.0
 
     features = ((style_diff - style_mean[:, np.newaxis]) / style_std[:, np.newaxis]).T
+    print(f'{unq_x.shape=}')
 
     return matchups, features, outcomes, models
+
+def fit_contextual_bt(
+        matchups,
+        features,
+        outcomes,
+        models,
+        alpha,
+        reg,
+        regularize_ratings,
+        init_rating,
+        scale=400.0, 
+        tol=1e-6
+    ):
+    n_features = features.shape[1]
+    n_models = len(models)
+    initial_params = np.zeros(n_models + n_features, dtype=np.float64)
+    
+    result = minimize(
+        fun=contextual_bt_loss_and_grad,
+        x0=initial_params,
+        args=(n_models, matchups, features, outcomes, alpha, reg, regularize_ratings),
+        jac=True,
+        method='L-BFGS-B',
+        options={'disp': False, 'maxiter': 100, 'gtol': tol},
+    )
+    
+    ratings = result["x"][:n_models]
+    feature_params = result["x"][n_models:]
+    scaled_ratings = scale_and_offset(
+        ratings,
+        models=models,
+        scale=scale,
+        init_rating=init_rating,
+    )
+    scaled_ratings = pd.Series(scaled_ratings, index=models).sort_values(ascending=False)
+    return scaled_ratings, feature_params
+
+
+
+def get_bootstrap_result_style_control(
+    X, Y, battles, models, func_compute_elo, num_round=1000
+):
+    elos = []
+    coefs = []
+    assert X.shape[0] % 2 == 0 and X.shape[0] == Y.shape[0]
+    k = int(
+        X.shape[0] / 2
+    )  # Since we duplicate the battles when constructing X and Y, we don't want to sample the duplicates
+
+    battles_tie_idx = (battles["winner"] == "tie") | (
+        battles["winner"] == "tie (bothbad)"
+    )
+    for _ in tqdm(range(num_round), desc="bootstrap"):
+        indices = np.random.choice(list(range(k)), size=(k), replace=True)
+
+        index2tie = np.zeros(k, dtype=bool)
+        index2tie[battles_tie_idx] = True
+
+        nontie_indices = indices[~index2tie[indices]]
+        tie_indices = np.concatenate(
+            [indices[index2tie[indices]], indices[index2tie[indices]] + k]
+        )
+
+        _X = np.concatenate([X[nontie_indices], X[nontie_indices], X[tie_indices]])
+        _Y = np.concatenate([Y[nontie_indices], Y[nontie_indices], Y[tie_indices]])
+
+        assert _X.shape == X.shape and _Y.shape == Y.shape
+
+        states = ~_X[:, : len(models)].any(axis=0)
+
+        elo, coef = func_compute_elo(_X, _Y, models=models[~states])
+        elos.append(elo)
+        coefs.append(coef)
+
+    df = pd.DataFrame(elos)
+    return df[df.median().sort_values(ascending=False).index], coefs
