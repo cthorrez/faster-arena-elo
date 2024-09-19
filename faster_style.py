@@ -60,6 +60,7 @@ def construct_style_matrices(
 
     # set two model cols by mapping the model names to their int ids
     matchups = df[['model_a', 'model_b']].map(lambda x: model_to_idx[x]).values
+    matchups = np.ascontiguousarray(matchups)
 
     n = matchups.shape[0]
     k = int(len(style_elements) / 2)
@@ -74,6 +75,7 @@ def construct_style_matrices(
     style_vector = np.zeros(shape=(2*k,n), dtype=np.int32)
     for idx, element in enumerate(style_elements):
         style_vector[idx,:] = df.conv_metadata.map(partial(style_fn, element=element)).values
+    style_vector = np.ascontiguousarray(style_vector)
 
     style_diff = (style_vector[:k] - style_vector[k:]).astype(float)
     style_sum = (style_vector[:k] + style_vector[k:]).astype(float)
@@ -93,6 +95,7 @@ def construct_style_matrices(
     outcomes = np.full(shape=(n,), fill_value=0.5)
     outcomes[df["winner"] == "model_a"] = 1.0
     outcomes[df["winner"] == "model_b"] = 0.0
+    outcomes = np.ascontiguousarray(outcomes)
 
     return matchups, features, outcomes, models
 
@@ -180,11 +183,10 @@ def get_bootstrap_style_mle(
         low=0, high=matchups.shape[0], size=(num_round, matchups.shape[0])
     )
 
-    # with mp.Pool(os.cpu_count()) as pool:
-    # with mp.Pool(4) as pool:
-    #     results = pool.map(contextual_bt_fn, boot_idxs)
+    with mp.Pool(os.cpu_count()) as pool:
+        results = pool.map(contextual_bt_fn, boot_idxs)
 
-    results = list(map(contextual_bt_fn, boot_idxs))
+    # results = list(map(contextual_bt_fn, boot_idxs))
 
     ratings_params = np.array(results)
     ratings = ratings_params[:,:len(models)]

@@ -10,26 +10,6 @@ from functools import partial
 from original import get_bootstrap_result as og_bootstrap, compute_mle_elo as og_mle
 from faster import get_bootstrap_result as fast_bootstrap, compute_mle_elo as fast_mle
 
-def load_data(use_polars=False, N=2_000_000_000):
-    if not use_polars:
-        # pandas is slower but I want to make sure it works exactly like chatbot arena notebook
-        df = pd.read_json('clean_battle_20240826_public.json').sort_values(ascending=True, by=["tstamp"])
-        df = df[df["anony"] == True]
-        # df = df[df["dedup_tag"].apply(lambda x: x.get("sampled", False))]
-        df = df.head(N)
-        df = df.reset_index(drop=True)
-        # weird as hell but it makes the MLE stuff faster downstream...
-        buffer = io.BytesIO()
-        df.to_parquet(buffer)
-        df = pd.read_parquet(buffer)
-    else:
-        # use polars for a quick inner loop
-        df = pl.read_json('clean_battle_20240826_public.json').lazy().filter(pl.col("anony"))
-        df = df.filter(pl.col("dedup_tag").struct.field("sampled").fill_null(False))
-        df = df.sort("tstamp").head(N)
-        df = df.collect().to_pandas()
-    print(f"num matches: {len(df)}")
-    return df
 
 
 def bench_function(df, refresh, function, **kwargs):
