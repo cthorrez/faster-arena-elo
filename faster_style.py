@@ -96,6 +96,38 @@ def construct_style_matrices(
 
     return matchups, features, outcomes, models
 
+def compute_style_mle(
+    df,
+    alpha=1.0,
+    reg=0.5,
+    regularize_ratings=True,
+    init_rating=1000.0,
+    scale=400.0, 
+    tol=1e-6 
+):
+    matchups, features, outcomes, models = construct_style_matrices(df)
+    ratings_params = fit_contextual_bt(
+        matchups,
+        features,
+        outcomes,
+        models=models,
+        alpha=alpha,
+        reg=reg,
+        regularize_ratings=regularize_ratings,
+        tol=tol,
+    )
+    ratings = ratings_params[:len(models)]
+    params = ratings_params[len(models):]
+    scaled_ratings = scale_and_offset(
+        ratings,
+        models=models,
+        scale=scale,
+        init_rating=init_rating,
+    )
+    scaled_ratings = pd.Series(scaled_ratings, index=models).sort_values(ascending=False)
+    return scaled_ratings, params
+
+
 def fit_contextual_bt(
         matchups,
         features,
@@ -105,8 +137,6 @@ def fit_contextual_bt(
         alpha=1.0,
         reg=0.5,
         regularize_ratings=True,
-        init_rating=1000.0,
-        scale=400.0, 
         tol=1e-6
     ):
     n_features = features.shape[1]
@@ -125,22 +155,15 @@ def fit_contextual_bt(
         method='L-BFGS-B',
         options={'disp': False, 'maxiter': 100, 'gtol': tol},
     )
-    
-    ratings = result["x"][:n_models]
-    feature_params = result["x"][n_models:]
-    scaled_ratings = scale_and_offset(
-        ratings,
-        models=models,
-        scale=scale,
-        init_rating=init_rating,
-    )
-    scaled_ratings = pd.Series(scaled_ratings, index=models).sort_values(ascending=False)
-    return scaled_ratings, feature_params
+    return result["x"]
 
 
 
-def get_bootstrap_result_style_control(
-    battles, num_round=1000
+def get_bootstrap_style_mle(
+    battles,
+    scale=400.0,
+    init_rating=1000.0,
+    num_round=1000
 ):
     matchups, features, outcomes, models = construct_style_matrices(battles)
 
@@ -158,11 +181,15 @@ def get_bootstrap_result_style_control(
     )
 
     # with mp.Pool(os.cpu_count()) as pool:
-    with mp.Pool(8) as pool:
-        results = pool.map(contextual_bt_fn, boot_idxs)
+    # with mp.Pool(4) as pool:
+    #     results = pool.map(contextual_bt_fn, boot_idxs)
 
-    print(results)
+    results = list(map(contextual_bt_fn, boot_idxs))
 
+    ratings_params = np.array(results)
+    ratings = ratings_params[:,:len(models)]
+    params = ratings_params[:,len(models):]
 
-    # df = pd.DataFrame(elos)
-    # return df[df.median().sort_values(ascending=False).index], coefs
+    scaled_ratings = scale_and_offset(ratings, models, scale, init_rating)
+    df = pd.DataFrame(scaled_ratings, columns=models)
+    return df[df.median().sort_values(ascending=False).index], params.mean(axis=0)
