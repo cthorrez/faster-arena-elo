@@ -1,6 +1,7 @@
 
 import math
 from tqdm import tqdm
+from collections import defaultdict
 import numpy as np
 import pandas as pd
 
@@ -74,3 +75,28 @@ def get_bootstrap_result(battles, func_compute_elo, num_round):
         rows.append(func_compute_elo(battles.sample(frac=1.0, replace=True)))
     df = pd.DataFrame(rows)
     return df[df.median().sort_values(ascending=False).index]
+
+
+
+def compute_elo(battles, K=4, SCALE=400, BASE=10, INIT_RATING=1000):
+    rating = defaultdict(lambda: INIT_RATING)
+
+    for rd, model_a, model_b, winner in battles[
+        ["model_a", "model_b", "winner"]
+    ].itertuples():
+        ra = rating[model_a]
+        rb = rating[model_b]
+        ea = 1 / (1 + BASE ** ((rb - ra) / SCALE))
+        eb = 1 / (1 + BASE ** ((ra - rb) / SCALE))
+        if winner == "model_a":
+            sa = 1
+        elif winner == "model_b":
+            sa = 0
+        elif winner == "tie" or winner == "tie (bothbad)":
+            sa = 0.5
+        else:
+            raise Exception(f"unexpected vote {winner}")
+        rating[model_a] += K * (sa - ea)
+        rating[model_b] += K * (1 - sa - eb)
+
+    return dict(rating)
