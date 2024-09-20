@@ -34,10 +34,11 @@ def fit_vectorized_elo(
     matchups,
     outcomes,
     num_models,
-    sample_indices=None,
     k=4.0,
     base=10.0,
+    init_rating=1000.0,
     scale=400.0,
+    sample_indices=None,
     ):
     """fit multiple sets of Elo ratings on different samples of the data at the same time"""
     alpha = math.log(base) / scale
@@ -50,25 +51,26 @@ def fit_vectorized_elo(
     # iterate over the rows of sample_indices, each column is an index into a match in the input arrays
     sample_range = np.arange(num_samples)
     for matchup_indices in sample_indices:
-        model_a_indices = matchups[matchup_indices,0] # [num_samples,]
-        model_b_indices = matchups[matchup_indices,1] # [num_samples,]
-        model_a_ratings = ratings[sample_range, model_a_indices] # [num_samples,]
-        model_b_ratings = ratings[sample_range, model_b_indices] # [num_samples,]
-        sample_outcomes = outcomes[matchup_indices] # [num_samples,]
-        probs = expit(alpha * (model_a_ratings - model_b_ratings)) # [num_samples,]
-        updates = k * (sample_outcomes - probs) # [num_samples,]
+        model_a_indices = matchups[matchup_indices,0]
+        model_b_indices = matchups[matchup_indices,1]
+        model_a_ratings = ratings[sample_range, model_a_indices]
+        model_b_ratings = ratings[sample_range, model_b_indices]
+        sample_outcomes = outcomes[matchup_indices]
+        probs = expit(alpha * (model_a_ratings - model_b_ratings))
+        updates = k * (sample_outcomes - probs)
         ratings[sample_range, model_a_indices] += updates
         ratings[sample_range, model_b_indices] -= updates
-    return np.squeeze(ratings)
+    return np.squeeze(ratings) + init_rating
 
-def get_elo_ratings(df, sample_indices=None):
+def get_elo_ratings(df, k=4.0, base=10.0, init_rating=1000.0, scale=400.0):
     matchups, outcomes, models = preprocess_to_numpy(df)
-    ratings = fit_vectorized_elo(matchups, outcomes, len(models), sample_indices=sample_indices)
-    return ratings
+    ratings = fit_vectorized_elo(matchups, outcomes, len(models),k, base, init_rating, scale, sample_indices=None)
+    return {model:ratings[idx] for idx,model in enumerate(models)}
 
-
-def get_bootstrap_elo_ratings(df, num_boot=100):
-    sample_indices = np.random.randint(low=0, high=len(df), size=(len(df), num_boot))
-    ratings = get_elo_ratings(df, sample_indices)
-    return ratings
+def get_bootstrap_elo_ratings(df, num_round=100, k=4.0, base=10.0, init_rating=1000.0, scale=400.0):
+    matchups, outcomes, models = preprocess_to_numpy(df)
+    sample_indices = np.random.randint(low=0, high=len(df), size=(len(df), num_round))
+    ratings = fit_vectorized_elo(matchups, outcomes, len(models), k, base, init_rating, scale, sample_indices)
+    df = pd.DataFrame(data=ratings, columns=models)
+    return df[df.median().sort_values(ascending=False).index]
 

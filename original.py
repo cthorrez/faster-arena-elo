@@ -69,10 +69,11 @@ def compute_mle_elo(
         elo_scores += 1114 - elo_scores[models["mixtral-8x7b-instruct-v0.1"]]
     return pd.Series(elo_scores, index=models.index).sort_values(ascending=False)
 
-def get_bootstrap_result(battles, func_compute_elo, num_round):
+def get_bootstrap_result(battles, func_compute_elo, num_round, seed=0):
     rows = []
+    rng = np.random.default_rng(seed)
     for i in tqdm(range(num_round), desc="bootstrap"):
-        rows.append(func_compute_elo(battles.sample(frac=1.0, replace=True)))
+        rows.append(func_compute_elo(battles.sample(frac=1.0, replace=True, random_state=rng)))
     df = pd.DataFrame(rows)
     return df[df.median().sort_values(ascending=False).index]
 
