@@ -16,6 +16,7 @@ from rating_systems import (
     compute_bootstrap_elo,
     compute_bt,
     compute_bootstrap_bt,
+    compute_style_control,
 )
 
 
@@ -66,6 +67,18 @@ def bench_bt(df):
         new_ratings = compute_bt(df)
     diffs = [original_ratings[m] - new_ratings[m] for m in original_ratings.keys()]
     print(f"mean abs diff: {np.mean(np.abs(diffs))}")
+
+def bench_style_control(df):
+    with timer('original style control'):
+        X, y, models = construct_style_matrices(df)
+        original_ratings, original_params = fit_mle_elo(X, y, models)
+    with timer('new style control'):
+        new_ratings, new_params = compute_style_control(df)
+    rating_diffs = [original_ratings[m] - new_ratings[m] for m in original_ratings.keys()]
+    print(f"mean abs rating diff: {np.mean(np.abs(rating_diffs))}")
+    param_diffs = np.mean(np.abs(original_params - new_params))
+    print(f"mean abs param diff: {param_diffs}")
+
 
 
 def bench_bootstrap_elo(df, num_round):
@@ -120,10 +133,11 @@ def main():
     df = load_data(N=N, use_preprocessed=True)
     # df = load_data()
 
-    bench_elo(df)
-    bench_bt(df)
-    bench_bootstrap_elo(df, num_round=100)
-    bench_bootstrap_bt(df, num_round=100)
+    # bench_elo(df)
+    # bench_bt(df)
+    bench_style_control(df)
+    # bench_bootstrap_elo(df, num_round=100)
+    # bench_bootstrap_bt(df, num_round=100)
 
 
 if __name__ == '__main__':

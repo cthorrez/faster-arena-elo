@@ -59,6 +59,47 @@ def preprocess_for_bt(df):
     return matchups, outcomes, models, weights
 
 
+def preprocess_for_style(
+    df,
+    apply_ratio=[1, 1, 1, 1],
+    style_elements=STYLE_CONTROL_ELEMENTS_V1,
+    add_one=True,
+):
+    matchups, outcomes, models = preprocess_for_elo(df) # this can use the same preprocessing as Elo
+
+    n = matchups.shape[0]
+    k = int(len(style_elements) / 2)
+
+    def extract_style_feature(x, feature):
+        val = x[feature]
+        if isinstance(val, int):
+            return val
+        else:
+            return sum(val.values())
+
+    style_vector = np.zeros(shape=(2*k,n), dtype=np.int32)
+    for idx, element in enumerate(style_elements):
+        style_vector[idx,:] = df.conv_metadata.map(partial(extract_style_feature, feature=element)).values
+    style_vector = np.ascontiguousarray(style_vector)
+
+    style_diff = (style_vector[:k] - style_vector[k:]).astype(float)
+    style_sum = (style_vector[:k] + style_vector[k:]).astype(float)
+
+    if add_one:
+        style_sum = style_sum + np.ones(style_diff.shape)
+
+    apply_ratio = np.flatnonzero(apply_ratio)
+
+    # Apply ratio where necessary (length, etc)
+    style_diff[apply_ratio] /= style_sum[apply_ratio]
+
+    style_mean = np.mean(style_diff, axis=1)
+    style_std = np.std(style_diff, axis=1)
+    features = ((style_diff - style_mean[:, np.newaxis]) / style_std[:, np.newaxis]).T
+
+    return matchups, features, outcomes, models
+
+
 def fit_vectorized_elo(
     matchups,
     outcomes,
@@ -133,6 +174,7 @@ def fit_bt(matchups, outcomes, weights, n_models, alpha, tol=1e-6):
     )
     return result["x"]
 
+
 def scale_and_offset(
     ratings,
     models,
@@ -148,11 +190,13 @@ def scale_and_offset(
         scaled_ratings += baseline_rating - scaled_ratings[..., [baseline_idx]]
     return scaled_ratings
 
+
 def compute_bt(df, base=10.0, scale=400.0, init_rating=1000, tol=1e-6):
     matchups, outcomes, models, weights = preprocess_for_bt(df)
     ratings = fit_bt(matchups, outcomes, weights, len(models), math.log(base), tol)
     scaled_ratings = scale_and_offset(ratings, models, scale, init_rating=init_rating)
     return pd.Series(scaled_ratings, index=models).sort_values(ascending=False)
+
 
 def compute_bootstrap_bt(battles, num_round, base=10.0, scale=400.0, init_rating=1000.0, tol=1e-6):
     matchups, outcomes, models, weights = preprocess_for_bt(battles)
@@ -168,7 +212,6 @@ def compute_bootstrap_bt(battles, num_round, base=10.0, scale=400.0, init_rating
 
     # the only thing different across samples is the distribution of weights
     bt_fn = partial(fit_bt, matchups, outcomes, n_models=len(models), alpha=np.log(base), tol=tol)
-
     with mp.Pool(os.cpu_count()) as pool:
         results = pool.map(bt_fn, boot_weights)
 
@@ -176,3 +219,95 @@ def compute_bootstrap_bt(battles, num_round, base=10.0, scale=400.0, init_rating
     scaled_ratings = scale_and_offset(ratings, models, scale, init_rating)
     df = pd.DataFrame(scaled_ratings, columns=models)
     return df[df.median().sort_values(ascending=False).index]
+
+DIFF_MASK = np.array([1.0, -1.0], dtype=np.float64) # create globally to not incur the instantiation cost in each call
+def contextual_bt_loss_and_grad(
+        params,
+        n_competitors,
+        matchups,
+        features,
+        outcomes,
+        alpha=1.0,
+        reg=1.0,
+        half_reg=0.5,
+    ):
+    reg_loss = half_reg * np.inner(params, params)
+
+    # Split params into ratings and feature parameters
+    ratings = params[:n_competitors]
+    feature_params = params[n_competitors:]
+
+    matchup_ratings = ratings[matchups]
+    bt_logits = alpha * (matchup_ratings[:,0] - matchup_ratings[:,1])
+    context_logits = np.dot(features, feature_params)
+    probs = expit(bt_logits + context_logits)
+    loss = -((np.log(probs) * outcomes + np.log(1.0 - probs) * (1.0 - outcomes))).sum() + reg_loss
+
+    error = (outcomes - probs)
+    grad = reg * params # initialize the grad as the regularization grad
+    matchups_grads = -alpha * error
+    np.add.at(
+        grad[:n_competitors],
+        matchups[:, [0, 1]],
+        matchups_grads[:, None] * DIFF_MASK
+    )
+    grad[n_competitors:] -= np.dot(features.T, error)
+    return loss, grad
+
+# note on regularization:
+# default reg is to 0.5 since the LogisticRegression default is 1.0
+# in the original implementation, matchups were duplicated 
+# that made the ratio of log loss to reg loss "twice as high"
+# in this non-duplicated version for parity we also reduce the reg by one half to match
+def fit_contextual_bt(
+        matchups,
+        features,
+        outcomes,
+        models,
+        idxs=None,
+        alpha=math.log(10.0),
+        reg=0.5,
+        tol=1e-6
+    ):
+    n_features = features.shape[1]
+    n_models = len(models)
+    initial_params = np.zeros(n_models + n_features, dtype=np.float64)
+    half_reg = reg / 2.0
+
+    # sample idxs optionally allow for fitting on a bootstrap sample of the dataset
+    if idxs is not None:
+        matchups, features, outcomes = matchups[idxs], features[idxs], outcomes[idxs]
+    
+    result = minimize(
+        fun=contextual_bt_loss_and_grad,
+        x0=initial_params,
+        args=(n_models, matchups, features, outcomes, alpha, reg, half_reg),
+        jac=True,
+        method='L-BFGS-B',
+        options={'disp': False, 'maxiter': 100, 'gtol': tol},
+    )
+    return result["x"]
+
+def compute_style_control(
+    df,
+    alpha=math.log(10.0),
+    reg=0.5,
+    init_rating=1000.0,
+    scale=400.0, 
+    tol=1e-6 
+):
+    matchups, features, outcomes, models = preprocess_for_style(df)
+    ratings_params = fit_contextual_bt(
+        matchups,
+        features,
+        outcomes,
+        models=models,
+        alpha=alpha,
+        reg=reg,
+        tol=tol,
+    )
+    ratings = ratings_params[:len(models)]
+    params = ratings_params[len(models):]
+    scaled_ratings = scale_and_offset(ratings, models, scale, init_rating)
+    scaled_ratings = pd.Series(scaled_ratings, index=models).sort_values(ascending=False)
+    return scaled_ratings, params
