@@ -6,7 +6,6 @@ import numpy as np
 from scipy.special import expit
 from scipy.optimize import minimize
 import pandas  as pd
-from faster import bt_loss_and_grad, scale_and_offset
 
 STYLE_CONTROL_ELEMENTS_V1 = [
     "sum_assistant_a_tokens",
@@ -311,3 +310,34 @@ def compute_style_control(
     scaled_ratings = scale_and_offset(ratings, models, scale, init_rating)
     scaled_ratings = pd.Series(scaled_ratings, index=models).sort_values(ascending=False)
     return scaled_ratings, params
+
+
+def compute_bootstrap_style_control(
+    df,
+    num_round,
+    alpha=math.log(10.0),
+    reg=0.5,
+    init_rating=1000.0,
+    scale=400.0, 
+    tol=1e-6 
+):
+    matchups, features, outcomes, models = preprocess_for_style(df)
+
+    contextual_bt_fn = partial(
+        fit_contextual_bt, matchups, features, outcomes, models, alpha=alpha, reg=reg, tol=tol
+    )
+
+    boot_idxs = np.random.randint(
+        low=0, high=matchups.shape[0], size=(num_round, matchups.shape[0])
+    )
+
+    # this one is still memory and cpu intensive so don't make too many processes
+    with mp.Pool(4) as pool:
+        results = pool.map(contextual_bt_fn, boot_idxs)
+
+    ratings_params = np.array(results)
+    ratings = ratings_params[:,:len(models)]
+    params = ratings_params[:,len(models):]
+    scaled_ratings = scale_and_offset(ratings, models, scale, init_rating)
+    df = pd.DataFrame(scaled_ratings, columns=models)
+    return df[df.median().sort_values(ascending=False).index], params
