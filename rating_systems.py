@@ -153,3 +153,26 @@ def compute_bt(df, base=10.0, scale=400.0, init_rating=1000, tol=1e-6):
     ratings = fit_bt(matchups, outcomes, weights, len(models), math.log(base), tol)
     scaled_ratings = scale_and_offset(ratings, models, scale, init_rating=init_rating)
     return pd.Series(scaled_ratings, index=models).sort_values(ascending=False)
+
+def compute_bootstrap_bt(battles, num_round, base=10.0, scale=400.0, init_rating=1000.0, tol=1e-6):
+    matchups, outcomes, models, weights = preprocess_for_bt(battles)
+    # bootstrap sample the unique outcomes and their counts directly using the multinomial distribution
+    rng = np.random.default_rng(seed=0)
+    idxs = rng.multinomial(
+        n=len(battles),
+        pvals=weights / weights.sum(),
+        size=(num_round)
+    )
+    # only the distribution over their occurance counts changes between samples (and it can be 0)
+    boot_weights = idxs.astype(np.float64) / len(battles)
+
+    # the only thing different across samples is the distribution of weights
+    bt_fn = partial(fit_bt, matchups, outcomes, n_models=len(models), alpha=np.log(base), tol=tol)
+
+    with mp.Pool(os.cpu_count()) as pool:
+        results = pool.map(bt_fn, boot_weights)
+
+    ratings = np.array(results)
+    scaled_ratings = scale_and_offset(ratings, models, scale, init_rating)
+    df = pd.DataFrame(scaled_ratings, columns=models)
+    return df[df.median().sort_values(ascending=False).index]
