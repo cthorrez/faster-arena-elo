@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from functools import partial
 from original import get_bootstrap_result as og_bootstrap, compute_mle_elo as og_mle
 from faster import get_bootstrap_result as fast_bootstrap, compute_mle_elo as fast_mle
+from data_utils import load_data
 
 
 

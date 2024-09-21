@@ -8,13 +8,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from functools import partial
 from data_utils import load_data
-from original import get_bootstrap_result, compute_mle_elo as og_mle, compute_elo as original_compute_elo
-from faster import get_bootstrap_result as fast_bootstrap, compute_mle_elo as fast_mle
+from original import get_bootstrap_result, compute_mle_elo, compute_elo as original_compute_elo
 from original_style import construct_style_matrices, fit_mle_elo, get_bootstrap_result_style_control
 from faster_style import construct_style_matrices as construct_style_matrices_fast, compute_style_mle, get_bootstrap_style_mle
 from rating_systems import (
-    compute_elo_ratings,
-    compute_bootstrap_elo_ratings
+    compute_elo,
+    compute_bootstrap_elo,
+    compute_bt
 )
 
 
@@ -45,16 +45,24 @@ def bench_elo(df):
     with timer('original elo'):
         original_ratings = original_compute_elo(df)
     with timer('new elo'):
-        new_ratings = compute_elo_ratings(df)
+        new_ratings = compute_elo(df)
+    diffs = [original_ratings[m] - new_ratings[m] for m in original_ratings.keys()]
+    print(f"mean abs diff: {np.mean(np.abs(diffs))}")
+
+def bench_bt(df):
+    with timer('original bt'):
+        original_ratings = compute_mle_elo(df)
+    with timer('new bt'):
+        new_ratings = compute_bt(df)
     diffs = [original_ratings[m] - new_ratings[m] for m in original_ratings.keys()]
     print(f"mean abs diff: {np.mean(np.abs(diffs))}")
 
 
 def bench_bootstrap_elo(df, num_round):
-    with timer('original elo'):
+    with timer('original bootstrap elo'):
         original_ratings = get_bootstrap_result(df, original_compute_elo, num_round, seed=42)
-    with timer('new elo'):
-        new_ratings = compute_bootstrap_elo_ratings(df, num_round=num_round)
+    with timer('new bootstrap elo'):
+        new_ratings = compute_bootstrap_elo(df, num_round=num_round)
     
     original_means = original_ratings.values.mean(axis=0)
     new_means = new_ratings[original_ratings.columns].values.mean(axis=0)
@@ -74,15 +82,14 @@ def bench_bootstrap_elo(df, num_round):
     )
 
 
-
 def main():
-    N = 200_000
+    N = 2_0000_000
     df = load_data(N=N, use_preprocessed=True)
     # df = load_data()
 
     bench_elo(df)
-    bench_bootstrap_elo(df, num_round=100)
-
+    bench_bt(df)
+    # bench_bootstrap_elo(df, num_round=100)
 
 
 if __name__ == '__main__':
