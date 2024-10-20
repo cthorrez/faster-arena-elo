@@ -157,7 +157,7 @@ def bt_loss_and_grad(ratings, matchups, outcomes, weights, alpha=1.0):
     matchups_grads = -alpha * (outcomes - probs) * weights
     model_grad = np.zeros_like(ratings)
     # aggregate gradients at the model level using the indices in matchups
-    np.add.at(model_grad, matchups[:, [0, 1]], matchups_grads[:, None] * np.array([1.0, -1.0], dtype=np.float64))
+    np.add.at(model_grad, matchups, matchups_grads[:, None] * np.array([1.0, -1.0], dtype=np.float64))
     return loss, model_grad
 
 
