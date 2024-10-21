@@ -33,6 +33,7 @@ def compute_mle_elo(
         fill_value=0,
     )
     ptbl_win = ptbl_a_win * 2 + ptbl_b_win.T * 2 + ptbl_tie
+    print(ptbl_win.shape)
 
     models = pd.Series(np.arange(len(ptbl_win.index)), index=ptbl_win.index)
 
@@ -61,6 +62,8 @@ def compute_mle_elo(
             cur_row += 2
     X = X[:cur_row]
     Y = Y[:cur_row]
+
+    print(X.shape)
 
     lr = LogisticRegression(fit_intercept=False, penalty=None, tol=tol, max_iter=100)
     lr.fit(X, Y, sample_weight=sample_weights)
