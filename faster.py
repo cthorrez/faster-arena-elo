@@ -1,4 +1,5 @@
 import os
+from tqdm import tqdm
 from functools import partial
 import multiprocessing as mp
 import numpy as np
@@ -85,10 +86,11 @@ def get_bootstrap_result(battles, num_round, BASE=10.0, SCALE=400.0, INIT_RATING
     # the only thing different across samples is the distribution of weights
     bt_fn = partial(fit_bt, matchups, outcomes, n_models=len(models), alpha=np.log(BASE), tol=tol)
 
+    ratings = np.empty(shape=(num_round, len(models)))
     with mp.Pool(os.cpu_count()) as pool:
-        results = pool.map(bt_fn, boot_weights)
+        for idx, result in enumerate(tqdm(pool.imap_unordered(bt_fn, boot_weights), total=num_round)):
+            ratings[idx,:] = result
 
-    ratings = np.array(results)
     scaled_ratings = scale_and_offset(ratings, models, SCALE, INIT_RATING)
     df = pd.DataFrame(scaled_ratings, columns=models)
     return df[df.median().sort_values(ascending=False).index]

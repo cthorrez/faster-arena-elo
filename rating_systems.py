@@ -1,4 +1,5 @@
 import os
+from tqdm import tqdm
 import math
 import multiprocessing as mp
 from functools import partial
@@ -147,7 +148,7 @@ def compute_bootstrap_elo(df, num_round=100, k=4.0, base=10.0, init_rating=1000.
     df = pd.DataFrame(data=ratings, columns=models)
     return df[df.median().sort_values(ascending=False).index]
 
-
+SIGN_FLIP = np.array([1.0, -1.0], dtype=np.float64)
 def bt_loss_and_grad(ratings, matchups, outcomes, weights, alpha=1.0):
     matchup_ratings = ratings[matchups]
     logits = alpha * (matchup_ratings[:,0] - matchup_ratings[:,1])
@@ -157,7 +158,7 @@ def bt_loss_and_grad(ratings, matchups, outcomes, weights, alpha=1.0):
     matchups_grads = -alpha * (outcomes - probs) * weights
     model_grad = np.zeros_like(ratings)
     # aggregate gradients at the model level using the indices in matchups
-    np.add.at(model_grad, matchups, matchups_grads[:, None] * np.array([1.0, -1.0], dtype=np.float64))
+    np.add.at(model_grad, matchups, matchups_grads[:, None] * SIGN_FLIP)
     return loss, model_grad
 
 
@@ -211,10 +212,11 @@ def compute_bootstrap_bt(battles, num_round, base=10.0, scale=400.0, init_rating
 
     # the only thing different across samples is the distribution of weights
     bt_fn = partial(fit_bt, matchups, outcomes, n_models=len(models), alpha=np.log(base), tol=tol)
+    ratings = np.empty(shape=(num_round, len(models)))
     with mp.Pool(os.cpu_count()) as pool:
-        results = pool.map(bt_fn, boot_weights)
+        for idx, result in enumerate(tqdm(pool.imap_unordered(bt_fn, boot_weights), total=num_round)):
+            ratings[idx,:] = result
 
-    ratings = np.array(results)
     scaled_ratings = scale_and_offset(ratings, models, scale, init_rating)
     df = pd.DataFrame(scaled_ratings, columns=models)
     return df[df.median().sort_values(ascending=False).index]

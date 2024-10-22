@@ -161,17 +161,19 @@ def bench_bootstrap_style_control(df, num_round, save_figs=False):
 
 
 def main():
-    # N = 2_000_000
+    N = 2_000_000_000
     # df = load_data(N=N, use_preprocessed=True)
-    df = load_data()
-    save_figs = True
+    df = load_data(N=N, use_preprocessed=False, route_through_parquet=True)
 
-    bench_elo(df)
+    # df = load_data()
+    save_figs = False
+
+    # bench_elo(df)
     bench_bt(df)
-    bench_style_control(df)
-    bench_bootstrap_elo(df, num_round=100, save_figs=save_figs)
+    # bench_style_control(df)
+    # bench_bootstrap_elo(df, num_round=100, save_figs=save_figs)
     bench_bootstrap_bt(df, num_round=100, save_figs=save_figs)
-    bench_bootstrap_style_control(df.tail(200_000), num_round=100, save_figs=save_figs)
+    # bench_bootstrap_style_control(df.tail(200_000), num_round=100, save_figs=save_figs)
 
 
 if __name__ == '__main__':
